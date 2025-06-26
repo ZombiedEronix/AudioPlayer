@@ -58,7 +58,8 @@ internal static class Program
         StartIPCServer();
 
 
-
+        Application.ThreadException += (s, e) =>
+        File.WriteAllText("crash.log", e.Exception.ToString());
         Application.Run(form);
     }
 
@@ -68,26 +69,57 @@ internal static class Program
         {
             while (true)
             {
-                using (var server = new NamedPipeServerStream(_pipe, PipeDirection.In))
-                using (var reader = new StreamReader(server))
+                try
                 {
-                    server.WaitForConnection();
-
-                    var args = new System.Collections.Concurrent.ConcurrentQueue<string>();
-                    while (!reader.EndOfStream)
+                    using (var server = new NamedPipeServerStream(_pipe, PipeDirection.In))
                     {
-                        args.Enqueue(reader.ReadLine());
-                    }
+                        server.WaitForConnection();
 
-                    foreach (string arg in args)
-                    {
-                        form.SelectFile(arg);
-                        form.Play();
-                    }
+                        var args = new List<string>();
+                        using (var reader = new StreamReader(server))
+                        {
+                            string line;
+                            while ((line = reader.ReadLine()) != null)
+                            {
+                                if (!string.IsNullOrWhiteSpace(line))
+                                    args.Add(line);
+                            }
+                        }
 
+                        ProcessReceivedFiles(args);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"IPC Error: {ex.Message}");
                 }
             }
         });
+    }
+
+    private static void ProcessReceivedFiles(List<string> files)
+    {
+        if (form.InvokeRequired)
+        {
+            form.Invoke(new Action<List<string>>(ProcessReceivedFiles), files);
+            return;
+        }
+
+        bool playlistWasEmpty = form.IsPlaylistEmpty();
+
+        foreach (var file in files)
+        {
+            if (File.Exists(file))
+            {
+                form.AddTrackInPlaylist(file);
+            }
+        }
+
+        if (playlistWasEmpty && files.Count > 0)
+        {
+            form.SelectTrackInPlaylist(0);
+            form.Play();
+        }
     }
 
     public static void SendArgumentsToFirstInstance(string[] args)

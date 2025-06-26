@@ -28,37 +28,43 @@ namespace AudioPlayer
 
         private Action<PlaybackStopReason> PlayBackStopped;
 
+        private float Volume = .5f;
         private int SelectedTrack;
-
 
         private RepeatMode repeatMode = RepeatMode.None;
 
-
+        public bool IsPlaylistEmpty() => trackList.Items.Count == 0;
 
         public MainForm(string[] files)
         {
             InitializeComponent();
             progressTimer = ProgressCountWhile();
             Initialize();
+
+            this.FormBorderStyle = FormBorderStyle.FixedSingle;
             this.AllowDrop = true;
-            if (files.Length == 1)
+
+            if (files.Length > 0)
             {
-                trackList.Items.Clear();
-                trackList.Items.Add(files[0]);
-                SelectFile(files[0]);
-                Play();
-            }
-            else if (files.Length > 0)
-            {
+                if (files.Length == 1)
+                {
+                    trackList.Items.Clear();
+                }
 
                 foreach (string file in files)
                 {
                     if (File.Exists(file))
                     {
-                        trackList.Items.Add(file);
+                        AddTrackInPlaylist(file);
                     }
                 }
 
+
+                if (trackList.Items.Count > 0)
+                {
+                    SelectTrackInPlaylist(0);
+                    Play();
+                }
             }
         }
 
@@ -83,7 +89,7 @@ namespace AudioPlayer
             {
                 foreach (string file in files)
                 {
-                    trackList.Items.Add(file);
+                    AddTrackInPlaylist(file);
                 }
             }
 
@@ -112,12 +118,6 @@ namespace AudioPlayer
             }
         }
 
-        private void FormInitializing(object sender, EventArgs e)
-        {
-            this.FormBorderStyle = FormBorderStyle.FixedSingle;
-        }
-
-
         public void Initialize()
         {
             if (outputDevice == null)
@@ -125,9 +125,8 @@ namespace AudioPlayer
                 outputDevice = new WaveOutEvent();
                 outputDevice.PlaybackStopped += (e, a) =>
                 {
-                    if (audioFileReader.Position > audioFileReader.Length - 2048)
+                    if (audioFileReader.CurrentTime >= audioFileReader.TotalTime - TimeSpan.FromMilliseconds(100))
                     {
-
                         PlayBackStopped?.Invoke(PlaybackStopReason.TrackEnded);
                     }
                 };
@@ -136,11 +135,50 @@ namespace AudioPlayer
 
         }
 
+
+        public void SelectTrackInPlaylist(int id)
+        {
+            if (id < 0)
+            {
+                new NotImplementedException();
+                return;
+            }
+            SelectFile(trackList.Items[id].ToString());
+        }
+
+        public void ClearPlayList()
+        {
+            trackList.Items.Clear();
+        }
+
+        public int AddTrackInPlaylist(string[] tracks)
+        {
+            foreach (string track in tracks)
+            {
+                trackList.Items.Add(track);
+            }
+            return trackList.Items.Count - 1;
+        }
+        public int AddTrackInPlaylist(string track)
+        {
+            trackList.Items.Add(track);
+            return trackList.Items.Count-1;
+        }
+
+
+
         public void OnButtonPlayClick(object sender, EventArgs e)
         {
             if (!fileSelected)
             {
-                OnSelectButtonClick(this, new EventArgs());
+                if (trackList.Items.Count == 0)
+                {
+                    OnAddTracksButtonClick(this, new EventArgs());
+                }
+                else
+                {
+                    SelectTrackInPlaylist(0);
+                }
             }
             Play();
         }
@@ -175,27 +213,38 @@ namespace AudioPlayer
             catch (ObjectDisposedException) { }
         }
 
-        private void OnSelectButtonClick(object sender, EventArgs e)
+        private void OnAddTracksButtonClick(object sender, EventArgs e)
         {
             OpenFileDialog dialog = new OpenFileDialog();
-
+            dialog.Filter = "Поддерживаемые аудиофайлы (*.mp3;*.wav;*.ogg;*.flac;*.mid;*.midi)|*.mp3;*.wav;*.ogg;*.flac;*.mid;*.midi|Все файлы (*.*)|*.*";
+            dialog.Multiselect = true;
             if (dialog.ShowDialog() == DialogResult.OK)
             {
-                SelectFile(dialog.FileName);
-                trackList.Items.Add(dialog.FileName);
-                Play();
+                if (dialog.FileNames.Length > 0)
+                {
+                    foreach (string file in dialog.FileNames)
+                    {
+                        AddTrackInPlaylist(file);
+                    }
+                }
+
             }
         }
 
         public void SelectFile(string directory)
         {
+            PlayBackStopped.Invoke(PlaybackStopReason.User);
+
             outputDevice.Stop();
             audioFileReader?.Dispose();
+
             selectedFile = directory;
             fileSelected = true;
+
             try
             {
                 audioFileReader = new(selectedFile);
+                audioFileReader.Volume = Volume;
             }
             catch
             {
@@ -212,36 +261,37 @@ namespace AudioPlayer
 
         private void PlayNextFile()
         {
-
-            SelectedTrack++;
-            if (SelectedTrack < trackList.Items.Count)
+            if (SelectedTrack < trackList.Items.Count - 1)
             {
+                SelectedTrack++;
                 trackList.SelectedIndex = SelectedTrack;
-                SelectFile(trackList.Items[SelectedTrack].ToString());
+                SelectTrackInPlaylist(SelectedTrack);
                 Play();
                 return;
             }
         }
         private void PlayPrevFile()
         {
-            if(SelectedTrack-1 !< 0) SelectedTrack--;
-            if (SelectedTrack < trackList.Items.Count)
+            if (SelectedTrack - 1 > -1) SelectedTrack--;
+            else return;
+
+            if (SelectedTrack < trackList.Items.Count - 1)
             {
                 trackList.SelectedIndex = SelectedTrack;
-                SelectFile(trackList.Items[SelectedTrack].ToString());
+                SelectTrackInPlaylist(SelectedTrack);
                 Play();
                 return;
             }
         }
 
-        private void trackProgressBar_Scroll(object sender, EventArgs e)
+        private void OnTrackProgressBarScroll(object sender, EventArgs e)
         {
             progressTimer.Stop();
             audioFileReader.Position = audioFileReader.Length / trackProgressBar.Maximum * trackProgressBar.Value;
             progressTimer.Start();
         }
 
-        private void OnSelectedTrackInList(object sender, EventArgs e)
+        private void TrackList_OnDoubleClick(object sender, EventArgs e)
         {
             if (trackList.SelectedIndex > trackList.Items.Count - 1 || trackList.SelectedIndex < 0)
             {
@@ -251,7 +301,7 @@ namespace AudioPlayer
             PlayBackStopped?.Invoke(PlaybackStopReason.User);
 
             SelectedTrack = trackList.SelectedIndex;
-            SelectFile(trackList.SelectedItem.ToString());
+            SelectTrackInPlaylist(trackList.SelectedIndex);
             Play();
         }
         private Timer ProgressCountWhile()
@@ -277,19 +327,38 @@ namespace AudioPlayer
 
         private void RemoveButton_Click(object sender, EventArgs e)
         {
-            if (trackList.Items.Count > 0)
+            if (trackList.SelectedIndex == -1)
+                return;
+
+            int removeIndex = trackList.SelectedIndex;
+
+            if (removeIndex == SelectedTrack)
             {
-                if (trackList.Items[trackList.SelectedIndex] != null)
-                {
-                    trackList.Items.Remove(trackList.SelectedIndex);
-                    trackList.BeginUpdate();
-                }
+                outputDevice?.Stop();
+                fileSelected = false;
+            }
+
+            trackList.Items.RemoveAt(removeIndex);
+
+            if (SelectedTrack >= removeIndex)
+                SelectedTrack--;
+
+            if (trackList.Items.Count == 0)
+            {
+                SelectedTrack = -1;
+                fileSelected = false;
             }
         }
 
-        private void prevButton_Click(object sender, EventArgs e)
+        private void OnClickPrevButton(object sender, EventArgs e)
         {
             PlayPrevFile();
+        }
+
+        private void VolumeBar_Scroll(object sender, EventArgs e)
+        {
+            Volume = (float)VolumeBar.Value / VolumeBar.Maximum;
+            audioFileReader.Volume = Volume;
         }
     }
 }
